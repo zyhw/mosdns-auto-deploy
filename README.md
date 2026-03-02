@@ -180,6 +180,34 @@ mosdns verify -c /opt/mosdns/config.yaml   # 验证配置语法
 
 ---
 
+## 清空 DNS 缓存
+
+### MosDNS 缓存
+
+**方式一：API 实时刷新（推荐，无需重启）**
+
+```bash
+curl -X POST http://127.0.0.1:9091/plugins/lazy_cache/flush
+```
+
+**方式二：删除缓存文件并重启**
+
+```bash
+rm -f /opt/mosdns/cache.dump && systemctl restart mosdns
+```
+
+### AdGuardHome 缓存
+
+**Web UI**：管理面板 → **设置 → DNS 设置** → 页面底部 → 点击「清除 DNS 缓存」
+
+**命令行**（替换账号密码）：
+
+```bash
+curl -u admin:密码 -X POST http://127.0.0.1:3000/control/cache_clear
+```
+
+---
+
 ## 后续运维
 
 | 操作 | 命令 |
