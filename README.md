@@ -44,16 +44,25 @@ auto-deploy/
 ### 1. 上传脚本到 Linux 虚拟机
 
 ```bash
-# 从 Mac 通过 scp 上传（替换 user@192.168.x.x）
-scp -r /Users/zyhw/mosdns+adgardhome/auto-deploy user@192.168.x.x:~/
+# 从 Mac 通过 scp 上传（替换为你的服务器地址）
+scp -r ./auto-deploy user@<服务器IP>:~/
 ```
 
 ### 2. 一键部署
 
 ```bash
-ssh user@192.168.x.x
+ssh user@<服务器IP>
 chmod +x ~/auto-deploy/deploy.sh
 sudo bash ~/auto-deploy/deploy.sh
+```
+
+```
+# 直接下载单个脚本执行（无需 clone）
+curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/main/deploy.sh | bash
+
+# 或者 clone 整个仓库
+git clone git@github.com:zyhw/mosdns-auto-deploy.git
+cd mosdns-auto-deploy && bash deploy.sh
 ```
 
 脚本会自动完成以下所有步骤：
@@ -84,6 +93,7 @@ sudo bash ~/auto-deploy/deploy.sh
 >
 > ```
 > 127.0.0.1:5335
+> tcp://127.0.0.1:5335
 > ```
 >
 > 并勾选"并行请求"或"负载均衡"。
