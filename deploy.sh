@@ -18,6 +18,10 @@ error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 MOSDNS_VERSION="v5.3.4"
 # AdGuardHome 使用官方安装脚本，自动获取最新版
 
+# ---- AdGuardHome 管理员账号（部署前请修改）-----------------------------------
+AGH_USER="${AGH_USER:-admin}"
+AGH_PASS="${AGH_PASS:-admin123}"
+
 # ---- 安装路径 ----------------------------------------------------------------
 MOSDNS_DIR="/opt/mosdns"
 AGH_DIR="/opt/AdGuardHome"
@@ -44,7 +48,7 @@ info "检测到架构: $ARCH"
 install_deps() {
   info "安装系统依赖..."
   apt-get update -qq
-  apt-get install -y -qq curl wget unzip jq
+  apt-get install -y -qq curl wget unzip jq apache2-utils
 }
 
 # ---- 修复 systemd-resolved（释放 53 端口）-----------------------------------
@@ -290,26 +294,206 @@ install_adguardhome() {
   info "安装 AdGuardHome..."
   # 使用官方安装脚本
   curl -fsSL https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh | sh -s -- -v
+  # 安装后立即停止，等待配置写入后再启动
+  systemctl stop AdGuardHome || true
   info "AdGuardHome 安装完成"
 }
 
-# ---- 配置 AdGuardHome 上游指向 MosDNS（API 方式）---------------------------
-configure_adguardhome_upstream() {
-  info "配置 AdGuardHome 上游 DNS 为 MosDNS (127.0.0.1:5335)..."
-  # AdGuardHome 配置文件路径
-  local agh_yaml="/opt/AdGuardHome/AdGuardHome.yaml"
-  if [[ ! -f "$agh_yaml" ]]; then
-    warn "AdGuardHome 配置文件尚未生成，请完成初始化后手动设置上游为: 127.0.0.1:5335"
-    return
-  fi
-  # 使用 sed 替换 upstream_dns（简单处理）
-  if grep -q "upstream_dns:" "$agh_yaml"; then
-    sed -i '/upstream_dns:/,/^[^ ]/s|.*-.*|    - 127.0.0.1:5335|' "$agh_yaml"
-    systemctl restart AdGuardHome || true
-    info "AdGuardHome 上游已更新"
-  else
-    warn "未找到 upstream_dns 字段，请手动在 AdGuardHome Web 界面设置上游: 127.0.0.1:5335"
-  fi
+# ---- 预生成 AdGuardHome 配置（跳过初始化向导）-------------------------------
+write_adguardhome_config() {
+  info "生成 AdGuardHome 配置文件..."
+
+  # 生成 bcrypt 密码哈希
+  local pass_hash
+  pass_hash=$(htpasswd -nbB "" "${AGH_PASS}" | cut -d: -f2)
+  info "管理员用户: ${AGH_USER}"
+
+  cat > "${AGH_DIR}/AdGuardHome.yaml" <<EOF
+http:
+  pprof:
+    port: 6060
+    enabled: false
+  address: 0.0.0.0:80
+  session_ttl: 720h
+users:
+  - name: ${AGH_USER}
+    password: ${pass_hash}
+auth_attempts: 5
+block_auth_min: 15
+http_proxy: ""
+language: zh-cn
+theme: auto
+dns:
+  bind_hosts:
+    - 0.0.0.0
+  port: 53
+  anonymize_client_ip: false
+  ratelimit: 0
+  ratelimit_subnet_len_ipv4: 24
+  ratelimit_subnet_len_ipv6: 56
+  ratelimit_whitelist: []
+  refuse_any: true
+  upstream_dns:
+    - 127.0.0.1:5335
+    - tcp://127.0.0.1:5335
+  upstream_dns_file: ""
+  bootstrap_dns:
+    - 9.9.9.10
+    - 149.112.112.10
+    - 2620:fe::10
+    - 2620:fe::fe:10
+  fallback_dns: []
+  upstream_mode: load_balance
+  fastest_timeout: 1s
+  allowed_clients: []
+  disallowed_clients: []
+  blocked_hosts:
+    - version.bind
+    - id.server
+    - hostname.bind
+  trusted_proxies:
+    - 127.0.0.0/8
+    - ::1/128
+  cache_enabled: false
+  cache_size: 0
+  cache_ttl_min: 0
+  cache_ttl_max: 0
+  cache_optimistic: false
+  bogus_nxdomain: []
+  aaaa_disabled: false
+  enable_dnssec: false
+  edns_client_subnet:
+    custom_ip: ""
+    enabled: false
+    use_custom: false
+  max_goroutines: 300
+  handle_ddr: true
+  ipset: []
+  ipset_file: ""
+  bootstrap_prefer_ipv6: false
+  upstream_timeout: 10s
+  private_networks: []
+  use_private_ptr_resolvers: false
+  local_ptr_upstreams: []
+  use_dns64: false
+  dns64_prefixes: []
+  serve_http3: false
+  use_http3_upstreams: false
+  serve_plain_dns: true
+  hostsfile_enabled: true
+tls:
+  enabled: false
+  server_name: ""
+  force_https: false
+  port_https: 443
+  port_dns_over_tls: 853
+  port_dns_over_quic: 853
+  port_dnscrypt: 0
+  dnscrypt_config_file: ""
+  allow_unencrypted_doh: false
+  certificate_chain: ""
+  private_key: ""
+  certificate_path: ""
+  private_key_path: ""
+  strict_sni_check: false
+querylog:
+  dir_path: ""
+  ignored: []
+  interval: 72h
+  size_memory: 1000
+  enabled: true
+  file_enabled: true
+statistics:
+  dir_path: ""
+  ignored: []
+  interval: 72h
+  enabled: true
+filters:
+  - enabled: true
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
+    name: AdGuard DNS filter
+    id: 1
+  - enabled: false
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt
+    name: AdAway Default Blocklist
+    id: 2
+whitelist_filters: []
+user_rules: []
+dhcp:
+  enabled: false
+  interface_name: ""
+  local_domain_name: lan
+  dhcpv4:
+    gateway_ip: ""
+    subnet_mask: ""
+    range_start: ""
+    range_end: ""
+    lease_duration: 86400
+    icmp_timeout_msec: 1000
+    options: []
+  dhcpv6:
+    range_start: ""
+    lease_duration: 86400
+    ra_slaac_only: false
+    ra_allow_slaac: false
+filtering:
+  blocking_ipv4: ""
+  blocking_ipv6: ""
+  blocked_services:
+    schedule:
+      time_zone: Local
+    ids: []
+  protection_disabled_until: null
+  safe_search:
+    enabled: false
+    bing: true
+    duckduckgo: true
+    ecosia: true
+    google: true
+    pixabay: true
+    yandex: true
+    youtube: true
+  blocking_mode: default
+  parental_block_host: family-block.dns.adguard.com
+  safebrowsing_block_host: standard-block.dns.adguard.com
+  rewrites: []
+  safebrowsing_cache_size: 1048576
+  safesearch_cache_size: 1048576
+  parental_cache_size: 1048576
+  cache_time: 30
+  filters_update_interval: 24
+  blocked_response_ttl: 10
+  filtering_enabled: true
+  parental_enabled: false
+  safebrowsing_enabled: false
+  protection_enabled: true
+clients:
+  runtime_sources:
+    whois: true
+    arp: true
+    rdns: false
+    dhcp: true
+    hosts: true
+  persistent: []
+log:
+  enabled: true
+  file: ""
+  max_backups: 0
+  max_size: 100
+  max_age: 3
+  compress: false
+  local_time: false
+  verbose: false
+os:
+  group: ""
+  user: ""
+  rlimit_nofile: 0
+schema_version: 29
+EOF
+
+  # 启动 AdGuardHome
+  systemctl start AdGuardHome
+  info "AdGuardHome 配置已生成并启动（无需初始化向导）"
 }
 
 # ---- 创建规则更新脚本 + cron ------------------------------------------------
@@ -330,8 +514,8 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') - 规则更新完成" >> /var/log/mosdns-upda
 SCRIPT
   chmod +x /usr/local/bin/update-mosdns-rules.sh
 
-  # 每天凌晨 4 点自动更新
-  (crontab -l 2>/dev/null; echo "0 4 * * * /usr/local/bin/update-mosdns-rules.sh") | crontab -
+  # 每天凌晨 4 点自动更新（先去重再添加）
+  (crontab -l 2>/dev/null | grep -v "update-mosdns-rules"; echo "0 4 * * * /usr/local/bin/update-mosdns-rules.sh") | crontab -
   info "已设置每日 04:00 自动更新规则"
 }
 
@@ -351,9 +535,11 @@ check_status() {
   ip=$(hostname -I | awk '{print $1}')
   echo ""
   echo "📌 访问 AdGuardHome 管理面板:"
-  echo "   http://${ip}:3000"
+  echo "   http://${ip}"
+  echo "   用户名: ${AGH_USER}"
+  echo "   密码: ${AGH_PASS}"
   echo ""
-  echo "📌 将路由器/DHCP 的 DNS 指向: ${ip}:53"
+  echo "📌 将路由器/DHCP 的 DNS 指向: ${ip}"
   echo ""
   echo "📌 测试 DNS 解析:"
   echo "   dig @127.0.0.1 baidu.com     # 应返回国内 IP"
@@ -374,7 +560,7 @@ main() {
   write_mosdns_config
   register_mosdns_service
   install_adguardhome
-  configure_adguardhome_upstream
+  write_adguardhome_config
   setup_auto_update
   check_status
 }

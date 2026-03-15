@@ -2,7 +2,7 @@
 
 ## 方案概述
 
-基于你文档中已有的配置思路，将整个部署过程封装为**一键 Shell 脚本**，在 Ubuntu/Debian Linux 虚拟机上自动完成所有安装和配置工作。
+MosDNS v5 + AdGuardHome**一键 Shell 脚本**，在 Ubuntu/Debian Linux 虚拟机上自动完成所有安装和配置工作。
 
 ### 架构设计
 
@@ -41,62 +41,78 @@ auto-deploy/
 
 ## 部署步骤
 
-### 1. 上传脚本到 Linux 虚拟机
+### 一键远程部署（推荐）
+
+SSH 登录服务器后，直接执行：
 
 ```bash
-# 从 Mac 通过 scp 上传（替换为你的服务器地址）
+# 使用默认账号 admin/admin123
+curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/refs/heads/main/deploy.sh | sudo bash
+
+# 自定义管理员账号（推荐）
+curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/refs/heads/main/deploy.sh | sudo AGH_USER=myuser AGH_PASS=mypassword bash
+```
+
+### 备选：手动上传部署
+
+```bash
+# 从 Mac 通过 scp 上传
 scp -r ./auto-deploy user@<服务器IP>:~/
+
+# SSH 登录后执行
+ssh user@<服务器IP>
+sudo AGH_USER=myuser AGH_PASS=mypassword bash ~/auto-deploy/deploy.sh
 ```
 
-### 2. 一键部署
+#### 管理员账号配置
+
+脚本通过环境变量设置 AdGuardHome 管理员账号，部署时自动写入配置：
+
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| `AGH_USER` | 管理员用户名 | `admin` |
+| `AGH_PASS` | 管理员密码 | `admin123` |
+
+> [!IMPORTANT]
+> 默认账号密码仅供测试，**正式部署请务必通过环境变量修改**。
+> 密码会自动转换为 bcrypt 哈希存储，不会明文保存。
+
+部署后如需修改密码，通过命令行操作：
 
 ```bash
-ssh user@<服务器IP>
-chmod +x ~/auto-deploy/deploy.sh
-sudo bash ~/auto-deploy/deploy.sh
+# 1. 生成新密码的 bcrypt 哈希（将 新密码 替换为你的密码）
+NEW_HASH=$(htpasswd -nbB "" "新密码" | cut -d: -f2)
+
+# 2. 替换配置文件中的密码哈希
+sed -i "s|password: .*|password: ${NEW_HASH}|" /opt/AdGuardHome/AdGuardHome.yaml
+
+# 3. 重启生效
+systemctl restart AdGuardHome
 ```
 
-```
-# 直接下载单个脚本执行（无需 clone）
-curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/main/deploy.sh | bash
+如需同时修改用户名，直接编辑 `/opt/AdGuardHome/AdGuardHome.yaml` 中的 `name:` 字段即可。
 
-# 或者 clone 整个仓库
-git clone git@github.com:zyhw/mosdns-auto-deploy.git
-cd mosdns-auto-deploy && bash deploy.sh
-```
+#### 部署流程
 
 脚本会自动完成以下所有步骤：
 
 | 步骤 | 内容 |
 |------|------|
-| ① | 安装系统依赖（curl, wget, unzip, jq） |
+| ① | 安装系统依赖（curl, wget, unzip, jq, apache2-utils） |
 | ② | 配置 systemd-resolved，释放 53 端口 |
 | ③ | 下载 MosDNS v5.3.4 二进制 |
 | ④ | 下载国内 IP/域名、GFW 域名规则列表 |
 | ⑤ | 生成 MosDNS config.yaml |
 | ⑥ | 注册并启动 MosDNS systemd 服务 |
 | ⑦ | 用官方脚本安装 AdGuardHome |
-| ⑧ | 配置 AdGuardHome 上游指向 MosDNS |
+| ⑧ | **预生成 AdGuardHome 配置（含账号密码，跳过初始化向导）** |
 | ⑨ | 设置每日 04:00 自动更新规则的 cron |
-| ⑩ | 打印状态检查和访问地址 |
+| ⑩ | 打印状态检查、访问地址和账号信息 |
 
-### 3. AdGuardHome 初始化
+### 3. 部署完成后
 
-浏览器访问 `http://<虚拟机IP>:3000`，完成初始化向导：
-
-- 管理界面监听：`0.0.0.0:3000`
-- DNS 监听：`0.0.0.0:53`
-- 设置管理员账号密码
-
-> [!IMPORTANT]
-> 初始化完成后，在 **设置 → DNS 设置 → 上游 DNS 服务器** 中填写：
->
-> ```
-> 127.0.0.1:5335
-> tcp://127.0.0.1:5335
-> ```
->
-> 并勾选"并行请求"或"负载均衡"。
+部署完成后可直接访问 `http://<服务器IP>` 进入管理面板，**无需执行初始化向导**。
+脚本末尾会打印管理员账号密码，请妥善记录。
 
 ---
 
@@ -110,6 +126,17 @@ cd mosdns-auto-deploy && bash deploy.sh
 | Fallback | 本地 DNS 若返回非国内 IP → 丢弃 → 改用国外 DNS（防污染） |
 | 缓存 | 2 万条，持久化到磁盘，lazy TTL 24h |
 | 监听 | MosDNS 仅监听 `127.0.0.1:5335`，不对外暴露 |
+
+## AdGuardHome 预设配置说明
+
+| 配置项 | 值 | 说明 |
+|--------|------|------|
+| Web 界面 | `0.0.0.0:80` | 直接用 IP 访问，无需加端口号 |
+| DNS 缓存 | 关闭 | 由 MosDNS 统一缓存，避免双重缓存 |
+| 限速 | 关闭 (0) | 局域网环境不需要限速 |
+| AAAA | 启用 | 支持 IPv6 网络 |
+| 上游 DNS | `127.0.0.1:5335` | 负载均衡模式转发到 MosDNS |
+| 语言 | 中文 | 管理界面默认中文 |
 
 ---
 
@@ -140,7 +167,7 @@ curl http://127.0.0.1:9091
 
 ### AdGuardHome 管理界面查验
 
-- 访问 `http://<IP>:3000` → 查询日志，应能看到域名被正确分流
+- 访问 `http://<IP>` → 查询日志，应能看到域名被正确分流
 
 ---
 
@@ -178,6 +205,37 @@ mosdns verify -c /opt/mosdns/config.yaml   # 验证配置语法
 
 脚本自动检测并支持：`x86_64 (amd64)` / `aarch64 (arm64)` / `armv7` / `armv6`
 
+### 不支持 IPv6 的网络环境
+
+默认配置支持 IPv6（AAAA 查询已启用）。如果你的网络**不支持 IPv6**，可手动禁用以减少不必要的查询，提升解析速度：
+
+**步骤一：在 AdGuardHome 中禁用 AAAA 查询**
+
+方式 A — Web 界面操作：
+
+管理面板 → **设置 → DNS 设置** → 勾选 **「禁用 IPv6 的 AAAA 解析」** → 保存
+
+方式 B — 命令行修改：
+
+```bash
+# 编辑配置文件
+sed -i 's/aaaa_disabled: false/aaaa_disabled: true/' /opt/AdGuardHome/AdGuardHome.yaml
+
+# 重启生效
+systemctl restart AdGuardHome
+```
+
+**步骤二（可选）：验证 AAAA 已禁用**
+
+```bash
+# 应返回空结果
+dig @127.0.0.1 google.com AAAA +short
+```
+
+> [!NOTE]
+> MosDNS 中的 `prefer_ipv4` 配置无需修改——它仅对国外域名做 IPv4 优先排序，不影响 IPv6 流量。
+> 如需恢复 IPv6，将上述 `aaaa_disabled` 改回 `false` 并重启即可。
+
 ---
 
 ## 清空 DNS 缓存
@@ -198,12 +256,10 @@ rm -f /opt/mosdns/cache.dump && systemctl restart mosdns
 
 ### AdGuardHome 缓存
 
-**Web UI**：管理面板 → **设置 → DNS 设置** → 页面底部 → 点击「清除 DNS 缓存」
-
 **命令行**（替换账号密码）：
 
 ```bash
-curl -u admin:密码 -X POST http://127.0.0.1:3000/control/cache_clear
+curl -u admin:密码 -X POST http://127.0.0.1/control/cache_clear
 ```
 
 ---
