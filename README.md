@@ -269,7 +269,8 @@ curl -u admin:密码 -X POST http://127.0.0.1/control/cache_clear
 | 操作 | 命令 |
 |------|------|
 | 重启 MosDNS | `systemctl restart mosdns` |
-| 手动更新规则 | `sudo bash /usr/local/bin/update-mosdns-rules.sh` |
+| 手动更新规则（本地） | `sudo bash /usr/local/bin/update-mosdns-rules.sh` |
+| 手动更新规则（远程） | `curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/refs/heads/main/update-rules.sh \| sudo bash` |
 | 查看日志 | `tail -f /opt/mosdns/log.log` |
 | 重启 AdGuardHome | `systemctl restart AdGuardHome` |
 | 升级 MosDNS | 重新执行 `deploy.sh` 或手动替换 `/opt/mosdns/mosdns` 二进制 |
