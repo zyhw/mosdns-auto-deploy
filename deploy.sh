@@ -220,7 +220,7 @@ plugins:
     args:
       primary: query_is_local_ip
       secondary: query_is_remote
-      threshold: 500
+      threshold: 100
       always_standby: true
 
   # ---- 国内域名查询 ----
@@ -254,13 +254,13 @@ plugins:
     type: udp_server
     args:
       entry: main_sequence
-      listen: 127.0.0.1:5335
+      listen: "[::]:5335"
 
   - tag: server_tcp
     type: tcp_server
     args:
       entry: main_sequence
-      listen: 127.0.0.1:5335
+      listen: "[::]:5335"
 EOF
   info "MosDNS 配置完成: ${MOSDNS_DIR}/config.yaml"
 }
@@ -335,7 +335,6 @@ dns:
   refuse_any: true
   upstream_dns:
     - 127.0.0.1:5335
-    - tcp://127.0.0.1:5335
   upstream_dns_file: ""
   bootstrap_dns:
     - 9.9.9.10
@@ -525,7 +524,7 @@ check_status() {
   info "===== 部署完成，状态检查 ====="
   echo ""
   echo "📌 MosDNS:"
-  systemctl is-active --quiet mosdns && echo "  ✅ 运行中 (127.0.0.1:5335)" || echo "  ❌ 未运行"
+  systemctl is-active --quiet mosdns && echo "  ✅ 运行中 ([::]:5335)" || echo "  ❌ 未运行"
 
   echo ""
   echo "📌 AdGuardHome:"
