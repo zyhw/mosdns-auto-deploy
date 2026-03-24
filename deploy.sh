@@ -130,10 +130,10 @@ plugins:
   - tag: forward_local
     type: forward
     args:
-      concurrent: 3
+      concurrent: 2
       upstreams:
         - addr: "tls://223.5.5.5"        # 阿里
-          enable_pipeline: false
+          enable_pipeline: true
         - addr: "tls://1.12.12.12"        # 腾讯 DNSPod
           enable_pipeline: true
         - addr: "tls://120.53.53.53"      # 腾讯备用
@@ -143,7 +143,7 @@ plugins:
   - tag: forward_remote
     type: forward
     args:
-      concurrent: 3
+      concurrent: 2
       upstreams:
         - addr: "tls://8.8.8.8"           # Google
           enable_pipeline: true
@@ -181,10 +181,11 @@ plugins:
       dump_file: "/opt/mosdns/cache.dump"
       dump_interval: 600
 
-  # ---- 国内解析 ----
+  # ---- 国内解析（附带 ECS 提升 CDN 精度）----
   - tag: local_sequence
     type: sequence
     args:
+      - exec: ecs 0.0.0.0/0
       - exec: $forward_local
 
   # ---- 国外解析（prefer_ipv4 保证 IPv4 优先）----
@@ -237,10 +238,19 @@ plugins:
       - matches: qname $geosite_no_cn
         exec: $remote_sequence
 
+  # ---- 内网/PTR 防泄漏短路 ----
+  - tag: query_is_lan
+    type: sequence
+    args:
+      - matches: qtype 12
+        exec: reject 5
+
   # ---- 主逻辑 ----
   - tag: main_sequence
     type: sequence
     args:
+      - exec: $query_is_lan
+      - exec: jump has_resp_sequence
       - exec: $mosdns_hosts
       - exec: $lazy_cache
       - exec: $query_is_local_domain
@@ -502,12 +512,29 @@ setup_auto_update() {
 #!/usr/bin/env bash
 set -euo pipefail
 IP_DIR="/opt/mosdns/ip"
-wget -q -O "${IP_DIR}/geoip_cn.txt" \
-  "https://raw.githubusercontent.com/IceCodeNew/4Share/master/geoip_china/china_ip_list.txt"
-wget -q -O "${IP_DIR}/geosite_cn.txt" \
-  "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/direct-list.txt"
-wget -q -O "${IP_DIR}/geosite_geolocation-gfw.txt" \
-  "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/proxy-list.txt"
+TMP_DIR=$(mktemp -d)
+FAILED=0
+
+safe_download() {
+  local url="$1" target="$2"
+  local tmp_file="${TMP_DIR}/$(basename "$target")"
+  if wget -q -O "$tmp_file" "$url" && [ -s "$tmp_file" ]; then
+    mv "$tmp_file" "$target"
+  else
+    echo "[ERROR] 下载失败或文件为空: $url" >&2
+    FAILED=1
+  fi
+}
+
+safe_download "https://raw.githubusercontent.com/IceCodeNew/4Share/master/geoip_china/china_ip_list.txt" "${IP_DIR}/geoip_cn.txt"
+safe_download "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/direct-list.txt" "${IP_DIR}/geosite_cn.txt"
+safe_download "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/proxy-list.txt" "${IP_DIR}/geosite_geolocation-gfw.txt"
+rm -rf "$TMP_DIR"
+
+if [ "$FAILED" -eq 1 ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - [WARN] 部分规则下载失败，MosDNS 未重启" >> /var/log/mosdns-update.log
+  exit 1
+fi
 systemctl restart mosdns
 echo "$(date '+%Y-%m-%d %H:%M:%S') - 规则更新完成" >> /var/log/mosdns-update.log
 SCRIPT
