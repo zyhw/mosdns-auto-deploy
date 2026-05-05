@@ -2,7 +2,7 @@
 
 ## 方案概述
 
-MosDNS v5 + AdGuardHome**一键 Shell 脚本**，在 Ubuntu/Debian Linux 虚拟机上自动完成所有安装和配置工作。
+MosDNS v5 + AdGuardHome **一键 Shell 脚本**，在 Ubuntu/Debian 及 Alpine Linux 服务器上自动完成所有安装和配置工作。
 
 ### 架构设计
 
@@ -33,7 +33,8 @@ MosDNS :5335      ← 负责智能分流
 
 ```
 auto-deploy/
-├── deploy.sh          # 一键安装主脚本
+├── deploy.sh          # Ubuntu/Debian 一键安装主脚本
+├── deploy-alpine.sh   # Alpine Linux 一键安装主脚本
 └── update-rules.sh    # 规则单独更新脚本（也可 cron 定时调用）
 ```
 
@@ -45,12 +46,22 @@ auto-deploy/
 
 SSH 登录服务器后，直接执行：
 
+**对于 Ubuntu / Debian：**
 ```bash
 # 使用默认账号 admin/admin123
 curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/refs/heads/main/deploy.sh | sudo bash
 
 # 自定义管理员账号（推荐）
 curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/refs/heads/main/deploy.sh | sudo AGH_USER=myuser AGH_PASS=mypassword bash
+```
+
+**对于 Alpine Linux：**
+```bash
+# 使用默认账号 admin/admin123
+curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/refs/heads/main/deploy-alpine.sh | sudo bash
+
+# 自定义管理员账号（推荐）
+curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/refs/heads/main/deploy-alpine.sh | sudo AGH_USER=myuser AGH_PASS=mypassword bash
 ```
 
 ### 备选：手动上传部署
@@ -87,7 +98,10 @@ NEW_HASH=$(htpasswd -nbB "" "新密码" | cut -d: -f2)
 sed -i "s|password: .*|password: ${NEW_HASH}|" /opt/AdGuardHome/AdGuardHome.yaml
 
 # 3. 重启生效
+# Ubuntu/Debian:
 systemctl restart AdGuardHome
+# Alpine:
+rc-service AdGuardHome restart
 ```
 
 如需同时修改用户名，直接编辑 `/opt/AdGuardHome/AdGuardHome.yaml` 中的 `name:` 字段即可。
@@ -161,8 +175,10 @@ dig @127.0.0.1 baidu.com A
 # 国外域名 → 应返回国外 IP，且 IPv4 优先
 dig @127.0.0.1 google.com A
 
-# 查看 MosDNS 实时日志
+# 查看 MosDNS 实时日志 (Ubuntu/Debian)
 journalctl -u mosdns -f
+# 或直接查看日志文件 (通用)
+tail -f /opt/mosdns/log.log
 
 # 查看 MosDNS API 状态
 curl http://127.0.0.1:9091
@@ -254,7 +270,10 @@ curl -X POST http://127.0.0.1:9091/plugins/lazy_cache/flush
 **方式二：删除缓存文件并重启**
 
 ```bash
+# Ubuntu/Debian:
 rm -f /opt/mosdns/cache.dump && systemctl restart mosdns
+# Alpine:
+rm -f /opt/mosdns/cache.dump && rc-service mosdns restart
 ```
 
 ### AdGuardHome 缓存
@@ -269,11 +288,11 @@ curl -u admin:密码 -X POST http://127.0.0.1/control/cache_clear
 
 ## 后续运维
 
-| 操作 | 命令 |
-|------|------|
-| 重启 MosDNS | `systemctl restart mosdns` |
-| 手动更新规则（本地） | `sudo bash /usr/local/bin/update-mosdns-rules.sh` |
-| 手动更新规则（远程） | `curl -fsSL https://raw.githubusercontent.com/zyhw/mosdns-auto-deploy/refs/heads/main/update-rules.sh \| sudo bash` |
-| 查看日志 | `tail -f /opt/mosdns/log.log` |
-| 重启 AdGuardHome | `systemctl restart AdGuardHome` |
-| 升级 MosDNS | 重新执行 `deploy.sh` 或手动替换 `/opt/mosdns/mosdns` 二进制 |
+| 操作 | 命令 (Ubuntu / Debian) | 命令 (Alpine) |
+|------|------------------------|---------------|
+| 重启 MosDNS | `systemctl restart mosdns` | `rc-service mosdns restart` |
+| 重启 AdGuardHome | `systemctl restart AdGuardHome` | `rc-service AdGuardHome restart` |
+| 查看日志 | `tail -f /opt/mosdns/log.log` | `tail -f /opt/mosdns/log.log` |
+| 手动更新规则（本地）| `sudo bash /usr/local/bin/update-mosdns-rules.sh` | `sudo bash /usr/local/bin/update-mosdns-rules.sh` |
+| 手动更新规则（远程）| `curl -fsSL https://raw.../update-rules.sh \| sudo bash` | 暂无独立版本，请使用本地命令 |
+| 升级 MosDNS | 重新执行 `deploy.sh` 或手动替换 `/opt/mosdns/mosdns` | 重新执行 `deploy-alpine.sh` 或手动替换 `/opt/mosdns/mosdns` |

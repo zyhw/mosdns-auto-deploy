@@ -1,0 +1,160 @@
+log:
+  level: error
+  file: "/opt/mosdns/log.log"
+
+api:
+  http: "127.0.0.1:9091"
+
+plugins:
+  # ---- 自定义 hosts ----
+  - tag: mosdns_hosts
+    type: hosts
+    args:
+      files:
+        - "/opt/mosdns/ip/hosts.txt"
+
+  # ---- 国内 DNS (DoT) ----
+  - tag: forward_local
+    type: forward
+    args:
+      concurrent: 2
+      upstreams:
+        - addr: "tls://223.5.5.5"        # 阿里
+          enable_pipeline: true
+        - addr: "tls://1.12.12.12"        # 腾讯 DNSPod
+          enable_pipeline: true
+        - addr: "tls://120.53.53.53"      # 腾讯备用
+          enable_pipeline: true
+
+  # ---- 国外 DNS (DoT, IPv4 优先) ----
+  - tag: forward_remote
+    type: forward
+    args:
+      concurrent: 2
+      upstreams:
+        - addr: "tls://8.8.8.8"           # Google
+          enable_pipeline: true
+        - addr: "tls://1.1.1.1"           # Cloudflare
+          enable_pipeline: true
+        - addr: "tls://208.67.222.222"    # OpenDNS
+          enable_pipeline: true
+
+  # ---- 域名集合 ----
+  - tag: geosite_cn
+    type: domain_set
+    args:
+      files:
+        - "/opt/mosdns/ip/geosite_cn.txt"
+
+  - tag: geosite_no_cn
+    type: domain_set
+    args:
+      files:
+        - "/opt/mosdns/ip/geosite_geolocation-gfw.txt"
+
+  # ---- IP 集合 ----
+  - tag: geoip_cn
+    type: ip_set
+    args:
+      files:
+        - "/opt/mosdns/ip/geoip_cn.txt"
+
+  # ---- 缓存 ----
+  - tag: lazy_cache
+    type: cache
+    args:
+      size: 20000
+      lazy_cache_ttl: 86400
+      dump_file: "/opt/mosdns/cache.dump"
+      dump_interval: 600
+
+  # ---- 国内解析（附带 ECS 提升 CDN 精度）----
+  - tag: local_sequence
+    type: sequence
+    args:
+      - exec: ecs 0.0.0.0/0
+      - exec: $forward_local
+
+  # ---- 国外解析（prefer_ipv4 保证 IPv4 优先）----
+  - tag: remote_sequence
+    type: sequence
+    args:
+      - exec: prefer_ipv4
+      - exec: $forward_remote
+
+  # ---- 有响应则终止 ----
+  - tag: has_resp_sequence
+    type: sequence
+    args:
+      - matches: has_resp
+        exec: accept
+
+  # ---- Fallback: 本地返回非国内 IP 则丢弃响应 ----
+  - tag: query_is_local_ip
+    type: sequence
+    args:
+      - exec: $local_sequence
+      - matches: "!resp_ip $geoip_cn"
+        exec: drop_resp
+
+  - tag: query_is_remote
+    type: sequence
+    args:
+      - exec: $remote_sequence
+
+  # ---- Fallback 插件 ----
+  - tag: fallback
+    type: fallback
+    args:
+      primary: query_is_local_ip
+      secondary: query_is_remote
+      threshold: 100
+      always_standby: true
+
+  # ---- 国内域名查询 ----
+  - tag: query_is_local_domain
+    type: sequence
+    args:
+      - matches: qname $geosite_cn
+        exec: $local_sequence
+
+  # ---- 国外(被墙)域名查询 ----
+  - tag: query_is_no_local_domain
+    type: sequence
+    args:
+      - matches: qname $geosite_no_cn
+        exec: $remote_sequence
+
+  # ---- 内网/PTR 防泄漏短路 ----
+  - tag: query_is_lan
+    type: sequence
+    args:
+      - matches: qtype 12
+        exec: reject 5
+
+  # ---- 主逻辑 ----
+  - tag: main_sequence
+    type: sequence
+    args:
+      - exec: $query_is_lan
+      - exec: jump has_resp_sequence
+      - exec: $mosdns_hosts
+      - exec: $lazy_cache
+      - exec: $query_is_local_domain
+      - exec: jump has_resp_sequence
+      - exec: $query_is_no_local_domain
+      - exec: jump has_resp_sequence
+      - exec: $fallback
+
+  # ---- 监听（仅本机，供 AdGuardHome 调用）----
+  - tag: server_udp
+    type: udp_server
+    args:
+      entry: main_sequence
+      listen: "[::]:5335"
+
+  - tag: server_tcp
+    type: tcp_server
+    args:
+      entry: main_sequence
+      listen: "[::]:5335"
